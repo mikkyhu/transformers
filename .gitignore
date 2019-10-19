@@ -138,3 +138,7 @@ serialization_dir
 
 # emacs
 *.*~
+
+# scratchwork
+/notebooks/scratchwork.ipynb
+
