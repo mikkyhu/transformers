@@ -262,10 +262,9 @@ def main():
             # Models with memory likes to have a long prompt for short inputs.
             raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
         context_tokens = tokenizer.encode(raw_text)
-        out, ents = get_generated_model(
+        out, ents = get_calibrated_model(
             model=model,
             context=context_tokens,
-            length=args.length,
             batch_size=args.batch_size,
             vocab_size=vocab_size,
             alpha=args.alpha,
@@ -289,6 +288,6 @@ def main():
 
 
 if __name__ == '__main__':
-    # main()
-    generated, ents = run("To be or not to be, that is the question:", top_k=1000)
-    print(generated, ents)
+    main()
+    # generated, ents = run("To be or not to be, that is the question:", top_k=1000)
+    # print(generated, ents)
