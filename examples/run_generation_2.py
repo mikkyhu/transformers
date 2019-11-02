@@ -267,7 +267,9 @@ def main():
                 device=args.device,
                 is_xlnet=bool(args.model_type == "xlnet"),
             )
-            ents[: gen_index] = next_ents
+            # print(next_ents)
+            ents[:, gen_index] = next_ents
+            # print(ents)
             generated = torch.cat((generated, next_token), dim=1)
 
         # show all generations from this batch
