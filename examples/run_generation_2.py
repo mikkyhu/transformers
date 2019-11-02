@@ -135,14 +135,7 @@ def get_lookahead_entropies(model, context, batch_size, vocab_size, candidates=N
 
             inputs = {'input_ids': batch}
             if is_xlnet:
-                # XLNet is a direct (predict same token, not next token) and bi-directional model by default
-                # => need one additional dummy token in the input (will be masked), attention mask and target mapping (see model docstring)
-                input_ids = torch.cat((generated, torch.zeros((1, 1), dtype=torch.long, device=device)), dim=1)
-                perm_mask = torch.zeros((1, input_ids.shape[1], input_ids.shape[1]), dtype=torch.float, device=device)
-                perm_mask[:, :, -1] = 1.0  # Previous tokens don't see last token
-                target_mapping = torch.zeros((1, 1, input_ids.shape[1]), dtype=torch.float, device=device)
-                target_mapping[0, 0, -1] = 1.0  # predict last token
-                inputs = {'input_ids': input_ids, 'perm_mask': perm_mask, 'target_mapping': target_mapping}
+                pass
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
             next_token_logits = outputs[0][:, -1, :]
@@ -186,16 +179,11 @@ def sample_candidates(model, generated, batch_size, vocab_size, alpha=0.0, tempe
 
     return candidates, model_next_logits
 
-def get_calibrated_model(model, context, batch_size, vocab_size, alpha=0.0, temperature=1, top_k=0, is_xlnet=False, device='cpu'):
-    num_samples = 1
+def sample_next(model, context, batch_size, vocab_size, alpha=0.0, temperature=1, top_k=0, is_xlnet=False, device='cpu'):
+    candidates, model_next_logits = sample_candidates(model, context, batch_size, vocab_size, alpha, temperature, top_k, is_xlnet, device)
 
-    context = torch.tensor(context, dtype=torch.long, device=device)
-    context = context.unsqueeze(0).repeat(num_samples, 1)
-    generated = context
-
-    candidates, model_next_logits = sample_candidates(model, generated, batch_size, vocab_size, alpha, temperature, top_k, is_xlnet, device)
-
-    lookahead_ents = get_lookahead_entropies(model, generated[0], batch_size, vocab_size, candidates=candidates, device=device, is_xlnet=is_xlnet).unsqueeze(0)
+    # TODO: why is this context[0] and not context[-1]? figure it out, might be busted
+    lookahead_ents = get_lookahead_entropies(model, context[0], batch_size, vocab_size, candidates=candidates, device=device, is_xlnet=is_xlnet).unsqueeze(0)
 
     if top_k != 0:
         # replace uncomputed entropies with average (for centered adjustment)
@@ -206,12 +194,9 @@ def get_calibrated_model(model, context, batch_size, vocab_size, alpha=0.0, temp
 
     next_probs = F.softmax(calibrated_next_logits, dim=-1)
     next_ents = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
-
-
     next_token = torch.multinomial(F.softmax(calibrated_next_logits, dim=-1), num_samples=1)
-    generated = torch.cat((generated, next_token), dim=1)
 
-    return generated, next_ents
+    return next_token, next_ents
 
 def main():
     parser = argparse.ArgumentParser()
@@ -224,6 +209,7 @@ def main():
     parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=0)
+    parser.add_argument("--num_samples", type=int, default=1)
     parser.add_argument("--alpha", type=float, default=0)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--no_cuda", action='store_true',
@@ -256,27 +242,37 @@ def main():
     vocab_size = tokenizer.vocab_size
     print('vocab_size:', vocab_size)
 
+    ents = torch.zeros((args.num_samples, args.length), device=args.device)
+
     while True:
         raw_text = args.prompt if args.prompt else input("Model prompt >>> ")
         if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
             raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
+
         context_tokens = tokenizer.encode(raw_text)
-        out, ents = get_calibrated_model(
-            model=model,
-            context=context_tokens,
-            batch_size=args.batch_size,
-            vocab_size=vocab_size,
-            alpha=args.alpha,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            device=args.device,
-            is_xlnet=bool(args.model_type == "xlnet"),
-        )
+        context = torch.tensor(context_tokens, dtype=torch.long, device=args.device)
+        context = context.unsqueeze(0).repeat(args.num_samples, 1)
+        generated = context
+
+        for gen_index in trange(args.length):
+            next_token, next_ents = sample_next(
+                model=model,
+                context=generated,
+                batch_size=args.batch_size,
+                vocab_size=vocab_size,
+                alpha=args.alpha,
+                temperature=args.temperature,
+                top_k=args.top_k,
+                device=args.device,
+                is_xlnet=bool(args.model_type == "xlnet"),
+            )
+            ents[: gen_index] = next_ents
+            generated = torch.cat((generated, next_token), dim=1)
 
         # show all generations from this batch
-        for i in range(len(out)):
-            seq = out[i, len(context_tokens):].tolist()
+        for i in range(len(generated)):
+            seq = generated[i, len(context_tokens):].tolist()
             text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
             print(text)
 
@@ -285,7 +281,6 @@ def main():
         if args.prompt:
             break
     return text
-
 
 if __name__ == '__main__':
     main()
