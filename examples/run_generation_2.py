@@ -198,6 +198,55 @@ def sample_next(model, context, batch_size, vocab_size, alpha=0.0, temperature=1
 
     return next_token, next_ents
 
+# note: will crash if no cuda
+def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 128, top_k=1024, top_p=0.0, is_xlnet=False, alpha=0.0, device='cuda', num_samples=1):
+    # TODO: find a smarter way to parallelize. Probably ~8x speedup waiting to happen!
+
+    model_class, tokenizer_class = MODEL_CLASSES[model_type]
+    tokenizer = tokenizer_class.from_pretrained(model_type)
+    model = model_class.from_pretrained(model_type)
+    model.to(device)
+    model.eval()
+
+    context_tokens = tokenizer.encode(raw_text)
+    context = torch.tensor(context_tokens, dtype=torch.long, device=device)
+    context = context.unsqueeze(0).repeat(1, 1) # TODO: 1 because we do not parallelize
+
+    avg_ents = torch.zeros((1, length), device=device)
+
+    for sample_num in num_samples:
+        set_seed(sample_num + 1)
+
+        ents = torch.zeros((num_samples, length), device=device)
+        generated = context.clone()
+
+        for gen_index in trange(length):
+            next_token, next_ents = sample_next(
+                model=model,
+                context=generated,
+                batch_size=batch_size,
+                vocab_size=tokenizer.vocab_size,
+                alpha=alpha,
+                temperature=temp,
+                top_k=top_k,
+                device=device,
+            )
+            # print(next_ents)
+            ents[:, gen_index] = next_ents
+            # print(ents)
+            generated = torch.cat((generated, next_token), dim=1)
+
+        # show all generations from this batch
+        for i in range(len(generated)):
+            seq = generated[i, len(context_tokens):].tolist()
+            text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+            print(text)
+
+        ents = ents.mean(axis = 0)
+        avg_ents = (avg_ents * i + ents) / (num_samples + 1)
+
+    return avg_ents
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_type", default=None, type=str, required=True,
@@ -285,6 +334,6 @@ def main():
     return text
 
 if __name__ == '__main__':
-    main()
-    # generated, ents = run("To be or not to be, that is the question:", top_k=1000)
-    # print(generated, ents)
+    # main()
+    ents = run("To be or not to be, that is the question:", alpha=-0.01, num_samples=10)
+    print(ents)
