@@ -199,7 +199,7 @@ def sample_next(model, context, batch_size, vocab_size, alpha=0.0, temperature=1
     return next_token, next_ents
 
 # note: will crash if no cuda
-def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 128, top_k=1024, top_p=0.0, is_xlnet=False, alpha=0.0, device='cuda', num_samples=1):
+def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 512, top_k=1024, top_p=0.0, is_xlnet=False, alpha=0.0, device='cuda', num_samples=1):
     # TODO: find a smarter way to parallelize. Probably ~8x speedup waiting to happen!
 
     model_class, tokenizer_class = MODEL_CLASSES[model_type]
@@ -208,19 +208,22 @@ def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 128, top
     model.to(device)
     model.eval()
 
+    if batch_size > top_k:
+        batch_size = top_k
+
     context_tokens = tokenizer.encode(raw_text)
     context = torch.tensor(context_tokens, dtype=torch.long, device=device)
     context = context.unsqueeze(0).repeat(1, 1) # TODO: 1 because we do not parallelize
 
     avg_ents = torch.zeros((1, length), device=device)
 
-    for sample_num in num_samples:
-        set_seed(sample_num + 1)
+    for sample_num in trange(num_samples):
+        set_seed(seed=(sample_num + 1))
 
         ents = torch.zeros((num_samples, length), device=device)
         generated = context.clone()
 
-        for gen_index in trange(length):
+        for gen_index in range(length):
             next_token, next_ents = sample_next(
                 model=model,
                 context=generated,
