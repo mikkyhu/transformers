@@ -246,7 +246,7 @@ def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 512, top
             print(text)
 
         ents = ents.mean(axis = 0)
-        avg_ents = (avg_ents * i + ents) / (num_samples + 1)
+        avg_ents = (avg_ents * num_samples + ents) / (num_samples + 1)
 
     return avg_ents
 
