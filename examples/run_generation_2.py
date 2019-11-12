@@ -199,7 +199,7 @@ def sample_next(model, context, batch_size, vocab_size, alpha=0.0, temperature=1
     return next_token, next_ents
 
 # note: will crash if no cuda
-def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 512, top_k=1024, top_p=0.0, is_xlnet=False, alpha=0.0, device='cuda', num_samples=1):
+def run(raw_text, model_type='gpt2', length=20, temp=1.0, batch_size = 512, top_k=1024, top_p=0.0, is_xlnet=False, alpha=0.0, device='cuda', num_samples=1):
     # TODO: find a smarter way to parallelize. Probably ~8x speedup waiting to happen!
 
     model_class, tokenizer_class = MODEL_CLASSES[model_type]
@@ -223,7 +223,7 @@ def run(raw_text, model_type='gpt2', length=100, temp=1.0, batch_size = 512, top
         ents = torch.zeros((num_samples, length), device=device)
         generated = context.clone()
 
-        for gen_index in range(length):
+        for gen_index in trange(length):
             next_token, next_ents = sample_next(
                 model=model,
                 context=generated,
@@ -336,7 +336,8 @@ def main():
             break
     return text
 
+# TODO: getting memory issues. Optimize!
 if __name__ == '__main__':
     # main()
-    ents = run("To be or not to be, that is the question:", alpha=-0.01, num_samples=10)
+    ents = run("To be or not to be, that is the question:", alpha=-0.01, num_samples=10, top_k = 128)
     print(ents)
