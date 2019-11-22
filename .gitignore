@@ -142,3 +142,5 @@ serialization_dir
 # scratchwork
 /notebooks/scratchwork.ipynb
 
+# zip files
+*.gz
