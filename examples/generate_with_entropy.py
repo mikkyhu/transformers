@@ -205,9 +205,9 @@ def main():
             text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
             print(text)
         
-        sve = ents.mean(axis=0)
-        np.savez('test.npz', sve)
+        avg_ents = ents.mean(axis=0)
         print(ents.mean(axis=0)) # average entropies over batch
+        np.savez(args.save_name, avg_ents=avg_ents, out=out)
         
         if args.prompt:
             break
