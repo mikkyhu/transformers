@@ -58,21 +58,43 @@ def calibrate(model, context, batch_size, vocab_size, top_k=0, iters=1000,device
     N = len(context)
     Pr = torch.zeros(N)
     H = torch.zeros(N)
-    Za = torch.zeros(N)
+    S = torch.zeros(N)
+
+    context = torch.tensor(context, dtype = torch.long, device=device)
+    context = context.unsqueeze(0)
 
     alpha = torch.randn(1, requires_grad=True)
     optimizer = optim.SGD(alpha, lr=0.001, momentum=0.9)
 
     def init_CEL():
         for i in range(N):
-            pass
+            context_i = context[:i]
+
+            lookahead_entropies = get_lookahead_entropies(
+                model = model,
+                context = context_i,
+                batch_size = 512,
+                vocab_size = vocab_size,
+                device = device
+            )
+
+            inputs = {'input_ids': generated}
+            outputs = model(**inputs)
+            next_logits = outputs[0][:, -1, :]
+            next_probs = F.softmax(next_logits, dim=-1)
+
+            # cache useful values
+            next_word = context[i]
+            Pr[i] = next_probs[next_word]
+            H[i] = lookahead_entropies[i]
+            S[i] = torch.dot(next_probs, torch.exp(-lookahead_entropies))
 
     def CEL():
+        Za = S * torch.exp(alpha)
         return torch.sum(Pr * torch.exp(-alpha * H) / Za)
     
     init_CEL()
 
-    # TODO: do i actually need to recalculate the gradients??
     for i in trange(iters):
         optimizer.zero_grad()
         loss = CEL()
