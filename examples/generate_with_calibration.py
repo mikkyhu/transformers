@@ -208,6 +208,7 @@ def main():
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
                         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS))
     parser.add_argument("--prompt", type=str, default="")
+    parser.add_argument("--save_name", type=str, default="test.npz")
     parser.add_argument("--padding_text", type=str, default="")
     parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=1.0)
@@ -269,7 +270,10 @@ def main():
             text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
             print(text) 
 
+        avg_ents = ents.mean(axis=0)
         print(ents.mean(axis=0)) # average entropies over batch
+
+        np.savez(args.save_name, avg_ents=avg_ents, out=out)
         
         if args.prompt:
             break
