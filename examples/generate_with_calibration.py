@@ -64,12 +64,18 @@ man is chased outside and beaten. Twenty years later, Rasputin sees a vision of
 the Virgin Mary, prompting him to become a priest. Rasputin quickly becomes famous,
 with people, even a bishop, begging for his blessing. <eod> </s> <eos>"""
 
-
-def set_seed(args):
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+# TODO: setting custom seed not robust.
+def set_seed(args=None, seed=42):
+    if args is None:
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        # not robust. will crash if no gpus available.
+        torch.cuda.manual_seed_all(seed)
+    else:
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if args.n_gpu > 0:
+            torch.cuda.manual_seed_all(args.seed)
 
 
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
@@ -210,6 +216,7 @@ def main():
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--save_name", type=str, default="test.npz")
     parser.add_argument("--padding_text", type=str, default="")
+    parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=0)
@@ -251,29 +258,38 @@ def main():
             # Models with memory likes to have a long prompt for short inputs.
             raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
         context_tokens = tokenizer.encode(raw_text)
-        out, ents = sample_sequence_calibrated(
-            model=model,
-            context=context_tokens,
-            length=args.length,
-            batch_size=args.batch_size,
-            vocab_size=vocab_size,
-            alpha=args.alpha,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            device=args.device,
-            is_xlnet=bool(args.model_type == "xlnet"),
-        )
-        
-        # show all generations from this batch
-        for i in range(len(out)):
-            seq = out[i, len(context_tokens):].tolist()
-            text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
-            print(text) 
 
-        avg_ents = ents.mean(axis=0)
+        avg_ents = torch.zeros((1, args.length), device=args.device)
+
+        for i in range(args.num_samples):
+
+            set_seed(seed=i)
+        
+            out, ents = sample_sequence_calibrated(
+                model=model,
+                context=context_tokens,
+                length=args.length,
+                batch_size=args.batch_size,
+                vocab_size=vocab_size,
+                alpha=args.alpha,
+                temperature=args.temperature,
+                top_k=args.top_k,
+                device=args.device,
+                is_xlnet=bool(args.model_type == "xlnet"),
+            )
+        
+            # show all generations from this batch
+            for j in range(len(out)):
+                seq = out[j, len(context_tokens):].tolist()
+                text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+                print(text) 
+
+            ents = ents.mean(axis=0)
+            avg_ents = (avg_ents * i + ents) / (i + 1)
+
         print(ents.mean(axis=0)) # average entropies over batch
 
-        np.savez(args.save_name, avg_ents=avg_ents, out=out)
+        np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
         
         if args.prompt:
             break

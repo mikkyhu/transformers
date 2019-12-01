@@ -64,12 +64,18 @@ man is chased outside and beaten. Twenty years later, Rasputin sees a vision of
 the Virgin Mary, prompting him to become a priest. Rasputin quickly becomes famous,
 with people, even a bishop, begging for his blessing. <eod> </s> <eos>"""
 
-
-def set_seed(args):
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+# TODO: setting custom seed not robust.
+def set_seed(args=None, seed=42):
+    if args is None:
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        # not robust. will crash if no gpus available.
+        torch.cuda.manual_seed_all(seed)
+    else:
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if args.n_gpu > 0:
+            torch.cuda.manual_seed_all(args.seed)
 
 
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
@@ -81,7 +87,7 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
                 Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
         From: https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
     """
-    assert logits.dim() == 1  # batch size 1 for now - could be updated for more but the code would be less clear
+    # assert logits.dim() == 1  # batch size 1 for now - could be updated for more but the code would be less clear
     top_k = min(top_k, logits.size(-1))  # Safety check
     if top_k > 0:
         # Remove all tokens with a probability less than the last token of the top-k
@@ -127,7 +133,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
             next_token_logits = outputs[0][:, -1, :] / temperature
-            filtered_logits = next_token_logits # top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             
             next_probs = F.softmax(filtered_logits, dim=-1)
             next_ents = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
@@ -138,6 +144,36 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
             generated = torch.cat((generated, next_token), dim=1)
     return generated, ents
 
+# sets a new random seed per batch. wrapper for sample_sequence().
+def sample_sequence_batch(model, length, context, tokenizer, num_samples=1, temperature=1, batch_size=128, top_k=0, top_p=0.0, is_xlnet=False, device='cpu'):
+    avg_ents = torch.zeros((1, length), device=device)
+
+    N = num_samples // batch_size
+
+    for i in range(N):
+        set_seed(seed=i) # needs to run on GPU. otherwise set seed crashes.
+
+        out, ents = sample_sequence(
+            model=model,
+            context=context,
+            length=length,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            num_samples=batch_size,
+            device=device
+        )
+
+        # show all generations from this batch
+        for j in range(len(out)):
+            seq = out[j, len(context):].tolist()
+            text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+            print(text)
+
+        ents = ents.mean(axis=0)
+        avg_ents = (avg_ents * i + ents) / (i + 1)
+        
+    return avg_ents
 
 def main():
     parser = argparse.ArgumentParser()
@@ -147,11 +183,12 @@ def main():
                         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS))
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--save_name", type=str, default="test.npz")
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--padding_text", type=str, default="")
     parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=0)
-    parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--top_p", type=float, default=0.0)
     parser.add_argument("--no_cuda", action='store_true',
                         help="Avoid using CUDA when available")
     parser.add_argument('--seed', type=int, default=42,
@@ -181,39 +218,30 @@ def main():
 
     print(args)
 
-
     while True:
         raw_text = args.prompt if args.prompt else input("Model prompt >>> ")
         if args.model_type in ["transfo-xl", "xlnet"]:
             # Models with memory likes to have a long prompt for short inputs.
             raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
         context_tokens = tokenizer.encode(raw_text)
-        out, ents = sample_sequence(
+        avg_ents = sample_sequence_batch(
             model=model,
             context=context_tokens,
             length=args.length,
+            tokenizer=tokenizer,
             temperature=args.temperature,
             top_k=args.top_k,
             top_p=args.top_p,
             device=args.device,
+            batch_size=args.batch_size,
             num_samples=args.num_samples,
             is_xlnet=bool(args.model_type == "xlnet"),
         )
-        
-        # show all generations from this batch
-        for i in range(len(out)):
-            seq = out[i, len(context_tokens):].tolist()
-            text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
-            print(text)
-        
-        avg_ents = ents.mean(axis=0)
-        print(ents.mean(axis=0)) # average entropies over batch
-        np.savez(args.save_name, avg_ents=avg_ents, out=out)
+
+        np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
         
         if args.prompt:
             break
-    return text
-
 
 if __name__ == '__main__':
     main()

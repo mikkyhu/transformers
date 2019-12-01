@@ -144,3 +144,9 @@ serialization_dir
 
 # zip files
 *.gz
+
+# output data
+jobs/
+
+# training sets
+training_data/

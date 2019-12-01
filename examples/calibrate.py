@@ -64,7 +64,7 @@ def calibrate(model, context, batch_size, vocab_size, top_k=0, iters=1000,device
     context = context.unsqueeze(0)
 
     alpha = torch.randn(1, requires_grad=True)
-    optimizer = optim.SGD(alpha, lr=0.001, momentum=0.9)
+    optimizer = optim.SGD([alpha], lr=0.001, momentum=0.9)
 
     def init_CEL():
         for i in range(N):
@@ -92,7 +92,7 @@ def calibrate(model, context, batch_size, vocab_size, top_k=0, iters=1000,device
     def CEL():
         Za = S * torch.exp(alpha)
         return torch.sum(Pr * torch.exp(-alpha * H) / Za)
-    
+
     init_CEL()
 
     for i in trange(iters):
@@ -102,11 +102,11 @@ def calibrate(model, context, batch_size, vocab_size, top_k=0, iters=1000,device
         optimizer.step()
 
         # print statistics
-        if i % 100 == 99:    
+        if i % 100 == 99:
             print(f'Loss at iter {i}: {loss}') # TODO: format this
 
     return alpha
-        
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -138,13 +138,6 @@ def main():
     model.to(args.device)
     model.eval()
 
-    if args.length < 0 and model.config.max_position_embeddings > 0:
-        args.length = model.config.max_position_embeddings
-    elif 0 < model.config.max_position_embeddings < args.length:
-        args.length = model.config.max_position_embeddings  # No generation bigger than model size 
-    elif args.length < 0:
-        args.length = MAX_LENGTH  # avoid infinite loop
-
     print(args)
 
     vocab_size = tokenizer.vocab_size
@@ -165,8 +158,6 @@ def main():
             device=args.device,
         )
         print(alpha)
-    return text
-
 
 if __name__ == '__main__':
     main()
