@@ -54,57 +54,63 @@ def set_seed(args):
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-def calibrate(model, context, batch_size, vocab_size, top_k=0, iters=1000,device='cpu'):
+def calibrate(model, context, vocab_size, batch_size = 512, top_k=0, iters=100000,device='cpu'):
     N = len(context)
-    Pr = torch.zeros(N)
-    H = torch.zeros(N)
-    S = torch.zeros(N)
-
-    context = torch.tensor(context, dtype = torch.long, device=device)
-    context = context.unsqueeze(0)
+    Pr = torch.zeros(N-1)
+    H = torch.zeros(N-1)
+    S = torch.zeros(N-1)
 
     alpha = torch.randn(1, requires_grad=True)
     optimizer = optim.SGD([alpha], lr=0.001, momentum=0.9)
 
     def init_CEL():
-        for i in range(N):
-            context_i = context[:i]
-
+        # TODO: missing 1st word
+        for i in trange(1, N):
+            context_i = torch.tensor(context[:i], dtype = torch.long, device=device).unsqueeze(0)
             lookahead_entropies = get_lookahead_entropies(
                 model = model,
-                context = context_i,
-                batch_size = 512,
+                context = context_i[0],
+                batch_size = batch_size,
                 vocab_size = vocab_size,
                 device = device
             )
 
-            inputs = {'input_ids': generated}
+            inputs = {'input_ids': context_i}
             outputs = model(**inputs)
             next_logits = outputs[0][:, -1, :]
-            next_probs = F.softmax(next_logits, dim=-1)
-
+            next_probs = F.softmax(next_logits, dim=-1)[0]
+    
             # cache useful values
             next_word = context[i]
-            Pr[i] = next_probs[next_word]
-            H[i] = lookahead_entropies[i]
-            S[i] = torch.dot(next_probs, torch.exp(-lookahead_entropies))
+            Pr[i-1] = next_probs[next_word]
+            H[i-1] = lookahead_entropies[next_word]
+            S[i-1] = torch.dot(next_probs, torch.exp(lookahead_entropies))
 
-    def CEL():
-        Za = S * torch.exp(alpha)
-        return torch.sum(Pr * torch.exp(-alpha * H) / Za)
-
+    def CEL(a):
+        Za = S * torch.exp(-a)
+        return torch.sum(Pr * torch.exp(-a * H) / Za)
+    
     init_CEL()
-
-    for i in trange(iters):
-        optimizer.zero_grad()
-        loss = CEL()
-        loss.backward()
+    loss = CEL(alpha)
+    loss.backward()
+    
+    lastloss = loss.clone().item()
+    for i in range(iters):
         optimizer.step()
-
-        # print statistics
-        if i % 100 == 99:
-            print(f'Loss at iter {i}: {loss}') # TODO: format this
-
+        loss = CEL(alpha)
+        
+        # print(loss)
+        # print(lastloss)
+        
+        if i % 10000 == 9999:    
+            print(f'Loss at iter {i}: {loss}. Alpha: {alpha}.')
+        
+        if loss.item() - lastloss > 0:
+            print(f'Stopping at iteration {i}. Alpha: {alpha}.')
+            break
+        
+        lastloss = loss.clone().item()
+         
     return alpha
 
 
