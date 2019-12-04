@@ -287,6 +287,8 @@ def main():
             ents = ents.mean(axis=0)
             avg_ents = (avg_ents * i + ents) / (i + 1)
 
+            np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
+
         print(ents.mean(axis=0)) # average entropies over batch
 
         np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
