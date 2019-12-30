@@ -87,7 +87,6 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
                 Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
         From: https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
     """
-    assert logits.dim() == 1  # batch size 1 for now - could be updated for more but the code would be less clear
     top_k = min(top_k, logits.size(-1))  # Safety check
     if top_k > 0:
         # Remove all tokens with a probability less than the last token of the top-k
@@ -135,14 +134,7 @@ def get_lookahead_entropies(model, context, batch_size, vocab_size, candidates=N
 
             inputs = {'input_ids': batch}
             if is_xlnet: 
-                # XLNet is a direct (predict same token, not next token) and bi-directional model by default
-                # => need one additional dummy token in the input (will be masked), attention mask and target mapping (see model docstring)
-                input_ids = torch.cat((generated, torch.zeros((1, 1), dtype=torch.long, device=device)), dim=1)
-                perm_mask = torch.zeros((1, input_ids.shape[1], input_ids.shape[1]), dtype=torch.float, device=device)
-                perm_mask[:, :, -1] = 1.0  # Previous tokens don't see last token
-                target_mapping = torch.zeros((1, 1, input_ids.shape[1]), dtype=torch.float, device=device)
-                target_mapping[0, 0, -1] = 1.0  # predict last token
-                inputs = {'input_ids': input_ids, 'perm_mask': perm_mask, 'target_mapping': target_mapping}
+                pass # not equipped to deal with xlnet yet
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
             next_token_logits = outputs[0][:, -1, :]
@@ -155,7 +147,7 @@ def get_lookahead_entropies(model, context, batch_size, vocab_size, candidates=N
 
     return ents
 
-def sample_sequence_calibrated(model, length, context, batch_size, vocab_size, alpha=0.0, temperature=1, top_k=0, is_xlnet=False, device='cpu'):
+def sample_sequence_calibrated(model, length, context, batch_size, vocab_size, alpha=0.0, temperature=1, top_k=0, top_p=0.0, is_xlnet=False, device='cpu'):
     num_samples = 1 # since entropy measurement is slow, no point parallelizing
     
     context = torch.tensor(context, dtype=torch.long, device=device)
@@ -166,18 +158,11 @@ def sample_sequence_calibrated(model, length, context, batch_size, vocab_size, a
     ents = torch.zeros((num_samples, length), device=device)
 
     with torch.no_grad():
-        for gen_index in trange(length):
+        for gen_index in range(length):
 
             inputs = {'input_ids': generated}
             if is_xlnet: 
-                # XLNet is a direct (predict same token, not next token) and bi-directional model by default
-                # => need one additional dummy token in the input (will be masked), attention mask and target mapping (see model docstring)
-                input_ids = torch.cat((generated, torch.zeros((1, 1), dtype=torch.long, device=device)), dim=1)
-                perm_mask = torch.zeros((1, input_ids.shape[1], input_ids.shape[1]), dtype=torch.float, device=device)
-                perm_mask[:, :, -1] = 1.0  # Previous tokens don't see last token
-                target_mapping = torch.zeros((1, 1, input_ids.shape[1]), dtype=torch.float, device=device)
-                target_mapping[0, 0, -1] = 1.0  # predict last token
-                inputs = {'input_ids': input_ids, 'perm_mask': perm_mask, 'target_mapping': target_mapping}
+                pass # not equipped to deal with xlnet yet
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
             model_next_logits = outputs[0][:, -1, :] / temperature
@@ -195,14 +180,15 @@ def sample_sequence_calibrated(model, length, context, batch_size, vocab_size, a
                 top_average_ent = lookahead_ents[lookahead_ents != -1].mean()
                 lookahead_ents[lookahead_ents != -1] = top_average_ent
             
-            calibrated_next_logits = model_next_logits + alpha*lookahead_ents 
-
+            calibrated_next_logits = model_next_logits - alpha * lookahead_ents 
             next_probs = F.softmax(calibrated_next_logits, dim=-1)
             next_ents = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
             
             ents[:, gen_index] = next_ents
 
-            next_token = torch.multinomial(F.softmax(calibrated_next_logits, dim=-1), num_samples=1)
+            # sample from top k
+            filtered_logits = top_k_top_p_filtering(calibrated_next_logits, top_k=top_k, top_p=top_p)
+            next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
             generated = torch.cat((generated, next_token), dim=1)
     return generated, ents
 
@@ -220,6 +206,7 @@ def main():
     parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=0)
+    parser.add_argument("--top_p", type=float, default=0.0)
     parser.add_argument("--alpha", type=float, default=0)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--no_cuda", action='store_true',
@@ -263,7 +250,7 @@ def main():
 
         for i in range(args.num_samples):
 
-            set_seed(seed=i)
+            set_seed(seed=i + args.seed)
         
             out, ents = sample_sequence_calibrated(
                 model=model,
@@ -274,6 +261,7 @@ def main():
                 alpha=args.alpha,
                 temperature=args.temperature,
                 top_k=args.top_k,
+                top_p=args.top_p,
                 device=args.device,
                 is_xlnet=bool(args.model_type == "xlnet"),
             )
@@ -288,10 +276,6 @@ def main():
             avg_ents = (avg_ents * i + ents) / (i + 1)
 
             np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
-
-        print(ents.mean(axis=0)) # average entropies over batch
-
-        np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
         
         if args.prompt:
             break

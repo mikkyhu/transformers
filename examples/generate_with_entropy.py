@@ -113,11 +113,11 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
     context = torch.tensor(context, dtype=torch.long, device=device)
     context = context.unsqueeze(0).repeat(num_samples, 1)
     generated = context
-    
-    # ents[k,t] = H(w_t | w_<t) for independent generation k
-    ents = torch.zeros((num_samples, length), device=device)
 
     with torch.no_grad():
+        # ents[k,t] = H(w_t | w_<t) for independent generation k
+        ents = torch.zeros((num_samples, length), device=device)
+
         for gen_index in trange(length):
 
             inputs = {'input_ids': generated}
@@ -133,45 +133,44 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
             next_token_logits = outputs[0][:, -1, :] / temperature
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
-            
-            next_probs = F.softmax(filtered_logits, dim=-1)
-            next_ents = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
-            
-            ents[:, gen_index] = next_ents
+            next_probs = F.softmax(next_token_logits, dim=-1)
+            ents[:, gen_index] = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
 
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
             generated = torch.cat((generated, next_token), dim=1)
     return generated, ents
 
 # sets a new random seed per batch. wrapper for sample_sequence().
 def sample_sequence_batch(model, length, context, tokenizer, num_samples=1, temperature=1, batch_size=128, top_k=0, top_p=0.0, is_xlnet=False, device='cpu'):
-    avg_ents = torch.zeros((1, length), device=device)
+    with torch.no_grad():
+        avg_ents = torch.zeros((1, length), device=device)
 
-    N = num_samples // batch_size
+        N = num_samples // batch_size
 
-    for i in range(N):
-        set_seed(seed=i) # needs to run on GPU. otherwise set seed crashes.
+        for i in range(N):
+            set_seed(seed=i) # needs to run on GPU. otherwise set seed crashes.
 
-        out, ents = sample_sequence(
-            model=model,
-            context=context,
-            length=length,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            num_samples=batch_size,
-            device=device
-        )
+            # put out in place of _ if you want to show generations
+            out, ents = sample_sequence(
+                model=model,
+                context=context,
+                length=length,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                num_samples=batch_size,
+                device=device
+            )
 
-        # show all generations from this batch
-        for j in range(len(out)):
-            seq = out[j, len(context):].tolist()
-            text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
-            print(text)
+            # show all generations from this batch
+            for j in range(len(out)):
+                seq = out[j, len(context):].tolist()
+                text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+                print(text)
 
-        ents = ents.mean(axis=0)
-        avg_ents = (avg_ents * i + ents) / (i + 1)
+            ents = ents.mean(axis=0)
+            avg_ents = (avg_ents * i + ents) / (i + 1)
         
     return avg_ents
 
