@@ -10,6 +10,10 @@ python3 generate_with_entropy.py --model_type=gpt2 --length=10 --model_name_or_p
 
 python3 generate_with_calibration.py --model_type=gpt2 --length=20 --model_name_or_path=gpt2 --prompt='In a shocking finding, scientist discovered a herd of unicorns living in a remote, previously unexplored valley, in the Andes Mountains. Even more surprising to the researchers was the fact that the unicorns spoke perfect English' --alpha=1.27 --batch_size=64
 
+# calibration
+
+python calibrate.py --model_type=gpt2 --model_name_or_path=gpt2 --save_path=
+--training_path= --batch_size=64
 
 # get a hold of gpu for testing before script run
 
