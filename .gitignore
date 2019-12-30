@@ -150,3 +150,6 @@ jobs/
 
 # training sets
 training_data/
+
+# commands I use for convenience
+commands.txt
