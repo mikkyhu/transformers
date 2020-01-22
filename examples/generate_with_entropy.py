@@ -132,10 +132,11 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
                 inputs = {'input_ids': input_ids, 'perm_mask': perm_mask, 'target_mapping': target_mapping}
 
             outputs = model(**inputs)  # Note: we could also use 'past' with GPT-2/Transfo-XL/XLNet (cached hidden-states)
-            next_token_logits = outputs[0][:, -1, :] / temperature
+            next_token_logits = outputs[0][:, -1, :] 
             next_probs = F.softmax(next_token_logits, dim=-1)
             ents[:, gen_index] = torch.sum(-next_probs * torch.log(next_probs + 1e-20), dim=-1)
 
+            next_token_logits = next_token_logits / temperature
             filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
             generated = torch.cat((generated, next_token), dim=1)
