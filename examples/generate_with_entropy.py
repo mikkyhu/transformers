@@ -121,7 +121,7 @@ def sample_sequence(model, length, context, num_samples=1, temperature=1, top_k=
         for gen_index in trange(length):
 
             inputs = {'input_ids': generated}
-            if is_xlnet: 
+            if is_xlnet:
                 # XLNet is a direct (predict same token, not next token) and bi-directional model by default
                 # => need one additional dummy token in the input (will be masked), attention mask and target mapping (see model docstring)
                 input_ids = torch.cat((generated, torch.zeros((1, 1), dtype=torch.long, device=device)), dim=1)
@@ -153,7 +153,7 @@ def sample_sequence_batch(model, length, context, tokenizer, num_samples=1, temp
             set_seed(seed=i) # needs to run on GPU. otherwise set seed crashes.
 
             # put out in place of _ if you want to show generations
-            out, ents = sample_sequence(
+            _, ents = sample_sequence(
                 model=model,
                 context=context,
                 length=length,
@@ -165,14 +165,14 @@ def sample_sequence_batch(model, length, context, tokenizer, num_samples=1, temp
             )
 
             # show all generations from this batch
-            for j in range(len(out)):
-                seq = out[j, len(context):].tolist()
-                text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
-                print(text)
+            #for j in range(len(out)):
+            #    seq = out[j, len(context):].tolist()
+            #    text = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+            #    print(text)
 
             ents = ents.mean(axis=0)
             avg_ents = (avg_ents * i + ents) / (i + 1)
-        
+
     return avg_ents
 
 def main():
@@ -212,7 +212,7 @@ def main():
     if args.length < 0 and model.config.max_position_embeddings > 0:
         args.length = model.config.max_position_embeddings
     elif 0 < model.config.max_position_embeddings < args.length:
-        args.length = model.config.max_position_embeddings  # No generation bigger than model size 
+        args.length = model.config.max_position_embeddings  # No generation bigger than model size
     elif args.length < 0:
         args.length = MAX_LENGTH  # avoid infinite loop
 
@@ -239,7 +239,7 @@ def main():
         )
 
         np.savez(args.save_name, avg_ents=avg_ents.cpu().numpy())
-        
+
         if args.prompt:
             break
 
